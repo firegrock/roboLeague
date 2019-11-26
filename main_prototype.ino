@@ -11,6 +11,12 @@ enum state_machine { ST_INIT, ST_CONNECT, ST_IDLE, ST_MOVE, ST_STOP };
 uint8_t state;
 // -------------------- //
 
+// ---------- PID initialization
+double input, output, setpoint;
+double Kp=4, Ki=1, Kd=0.01;
+PID pidControl(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
+// -------------------- //
+
 // ---------- Class robot
 class Robot
 {
@@ -20,7 +26,7 @@ public:
   unsigned int m_UdpPort = 4210;                      // local port to listen on
   char m_packetBuffer[255];                           // buffer to hold incoming packet
 
-  bool m_carPosition = false;                            // vehicle position
+  bool m_carPosition = false;                         // vehicle position
   int m_speedy = 0;                                   // initial speed
 
 public:
@@ -48,6 +54,7 @@ public:
   void moveVehicle()
   {
     state = ST_MOVE;
+    m_speedy = output;
 
     if (m_carPosition)
     {
@@ -80,6 +87,8 @@ void setup()
 
   delay(5);
   car.waitConnection();
+  pidControl.SetMode(AUTOMATIC);
+  pidControl.SetTunings(Kp, Ki, Kd);
   delay(5);
 
   Serial.println("Initialization completed"); // выводим сообщение об удачной инициализации
@@ -99,26 +108,28 @@ void loop()
       car.idleVehicle();
       break;
     case ST_MOVE:
+      Serial.println(state);
+      input = Udp.parsePacket();
+
+      if (input)
+      {
+        pidControl.Compute();
+        // read the packet into packetBufffer
+        int len = Udp.read(car.m_packetBuffer, 255);
+        if (len > 0) car.m_packetBuffer[len] = 0;
+
+        String speedy_str(car.m_packetBuffer);
+        car.m_speedy = speedy_str.toInt();
+
+        Serial.println(car.m_speedy);
+        Serial.print(" ");
+      }
+
       car.moveVehicle();
       break;
     case ST_STOP:
       car.stopVehicle();
       break;
-
-    // Serial.println(state);
-    // int packet = Udp.parsePacket();
-    //
-    // if (packet)
-    // {
-    //   // read the packet into packetBufffer
-    //   int len = Udp.read(car.m_packetBuffer, 255);
-    //   if (len > 0) car.m_packetBuffer[len] = 0;
-    //
-    //   String speedy_str(car.m_packetBuffer);
-    //   car.m_speedy = speedy_str.toInt();
-    //
-    //   Serial.println(car.m_speedy);
-    //   Serial.print(" ");
-    // }
+    default: break;
   }
 }
