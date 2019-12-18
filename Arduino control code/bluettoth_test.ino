@@ -8,12 +8,12 @@
 
 // ---------- Declare all objects
 WiFiUDP Udp;                            // UDP conenction
-BluetoothSerial ESP_BT;                 // Object for bluetooth
+BluetoothSerial SerialBT;                 // Object for bluetooth
 
 Motor motorA(0x30, _MOTOR_A, 1000);     // Motors left and right side
 Motor motorB(0x30, _MOTOR_B, 1000);
                                         // Joystick control
-#define MOTOR_MAX 255                   // Max PWM possible
+#define MOTOR_MAX 100                   // Max PWM possible
 #define JOY_MAX 40                      // Joystick max-amplitude
 
 const int statusLED = 13;
@@ -34,6 +34,52 @@ uint8_t state;
 // -------------------- //
 
 
+// ---------- Parsing string
+int intData[2];                           // array of received data
+boolean recievedFlag;
+int dutyR, dutyL;
+int signalX, signalY;
+int dataX, dataY;
+
+boolean getStarted;
+byte index_x;
+String string_convert = "";
+
+void parsing()
+{
+  if (SerialBT.available())
+  {
+    char incomingByte = SerialBT.read();                // обязательно ЧИТАЕМ входящий символ
+
+    if (getStarted)
+    {                                                     // если приняли начальный символ (парсинг разрешён)
+      if (incomingByte != ' ' && incomingByte != ';')     // если это не пробел И не конец
+        string_convert += incomingByte;                   // складываем в строку
+      else
+      {                                               // если это пробел или ; конец пакета
+        intData[index_x] = string_convert.toInt();    // преобразуем строку в int и кладём в массив
+        string_convert = "";                          // очищаем строку
+        index_x++;                                    // переходим к парсингу следующего элемента массива
+      }
+    }
+
+    if (incomingByte == '$')
+    {                                           // если это $
+      getStarted = true;                        // поднимаем флаг, что можно парсить
+      index_x= 0;                               // сбрасываем индекс
+      string_convert = "";                      // очищаем строку
+    }
+
+    else if (incomingByte == ';')
+    {                                           // если таки приняли ; - конец парсинга
+      getStarted = false;                       // сброс
+      recievedFlag = true;                      // флаг на принятие
+    }
+  }
+}
+// -------------------- //
+
+
 // ---------- Class robot
 class Robot
 {
@@ -44,6 +90,8 @@ public:
   char m_packetBuffer[255];                           // buffer to hold incoming packet
 
   int val = 0;
+  int speedL = 0;
+  int speedR = 0;
 public:
   void initialize()
   {
@@ -59,7 +107,12 @@ public:
     }
 
     if (BTenable == 1)
-      ESP_BT.begin("Robot controller");
+    {     
+      if(!SerialBT.begin("Robot controller 2"))
+        Serial.println("An error occurred initializing Bluetooth");
+      else
+        Serial.println("Bluetooth initialized");
+    }
 
     state = ST_CONNECT;
   }
@@ -72,21 +125,22 @@ public:
     state = ST_IDLE;
   }
 
-  void moveVehicle(int speedLeft, int speedRight, int inverse = 0)
+  void leftSide(int speedLeft, int inverse = 0)
   {
-    if (inverse)
-    {
-      motorA.setmotor(_CW, speedLeft);
-      motorB.setmotor(_CCW, speedRight);
-    }
+    speedL = constrain(abd(speedLeft), 0, 100);
+    if (speedL > 0)
+      motorA.setmotor(_CW, speedL)
+    else 
+      motorA.setmotor(_CCW, speedL)
+  }
 
-    else
-    {
-      motorA.setmotor(_CCW, speedLeft);
-      motorB.setmotor(_CW, speedRight);
-    }
-
-    state = ST_MOVE;
+  void rightSide(int speedLeft, int inverse = 0)
+  {
+    speedR = constrain(abd(speedRight), 0, 100);
+    if (speedR > 0)
+      motorA.setmotor(_CCW, speedR)
+    else 
+      motorA.setmotor(_CW, speedR)
   }
 
   void stopVehicle()
@@ -111,14 +165,14 @@ public:
 Robot car;
 // -------------------- //
 
-int inverse = 0;
+int inverse = 0, speedRight = 0, speedLeft = 0;
 void setup()
 {
   Serial.begin(115200);
   Serial.println("Begin initialization ...");
 
   delay(5);
-  car.waitConnection(1, 0);
+  car.waitConnection(0, 1);
   delay(5);
   pidControl.SetMode(AUTOMATIC);
   pidControl.SetTunings(Kp, Ki, Kd);
@@ -132,6 +186,7 @@ void setup()
   Serial.println("Initialization completed"); // выводим сообщение об удачной инициализации
 }
 
+int incoming;
 void loop()
 {
   switch (state)
@@ -149,38 +204,32 @@ void loop()
       car.idleVehicle();
       break;
     case ST_MOVE:
-    {
-      Serial.println("State = move");
+      state = ST_MOVE;
       inverse = car.inversed();
-      Serial.println(inverse);
+      parsing();
 
-      for ( int i = 0; i < 10; ++i)
+      if (recievedFlag)
       {
-        car.moveVehicle(15, 15, inverse);
-        delay(50);
-        Serial.print("Delay iteration");
-        Serial.println(i);
-        car.stopVehicle();
+        recievedFlag = false;
+        dataX = intData[0];
+        dataY = intData[1];
+        SerialBT.flush();
+        
+        signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // Y-axis signal
+        signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // Х-axis signal
+        
+        dutyR = signalY + signalX;
+        dutyL = signalY - signalX;
+      
+        Serial.println("SPEED R SPEED L");
+        Serial.print(dutyR);
+        Serial.print(" ");
+        Serial.println(dutyL);
+
+        car.leftSide(dutyL, inverse);
+        car.rightSide(dutyR, inverse);
       }
-//      Control using UDP
-//      int input = Udp.parsePacket();
-//
-//      if (input)
-//      {
-//        // pidControl.Compute();
-//        int len = Udp.read(car.m_packetBuffer, 255);
-//        if (len > 0) car.m_packetBuffer[len] = 0;
-//
-//        String speedy_str(car.m_packetBuffer);
-//        car.m_speedy = speedy_str.toInt();
-//
-//        Serial.println(car.m_speedy);
-//        Serial.print(" ");
-//
-//        car.moveVehicle();
-//      }
       break;
-    }
     case ST_STOP:
       Serial.println("State = stop");
       car.stopVehicle();
@@ -188,113 +237,3 @@ void loop()
     default: break;
   }
 }
-
-
-//// ---------- Parsing string
-//int intData[2];                           // array of received data
-//boolean recievedFlag;
-//int dutyR, dutyL;
-//int signalX, signalY;
-//int dataX, dataY;
-//
-//boolean getStarted;
-//byte index_x;
-//String string_convert = "";
-//
-//void parsing()
-//{
-//  if (ESP_BT.available())
-//  {
-//    char incomingByte = ESP_BT.read();                // обязательно ЧИТАЕМ входящий символ
-//
-//    if (getStarted)
-//    {                                                     // если приняли начальный символ (парсинг разрешён)
-//      if (incomingByte != ' ' && incomingByte != ';')     // если это не пробел И не конец
-//        string_convert += incomingByte;                   // складываем в строку
-//      else
-//      {                                               // если это пробел или ; конец пакета
-//        intData[index_x] = string_convert.toInt();    // преобразуем строку в int и кладём в массив
-//        string_convert = "";                          // очищаем строку
-//        index_x++;                                    // переходим к парсингу следующего элемента массива
-//      }
-//    }
-//
-//    if (incomingByte == '$')
-//    {                                           // если это $
-//      getStarted = true;                        // поднимаем флаг, что можно парсить
-//      index_x= 0;                               // сбрасываем индекс
-//      string_convert = "";                      // очищаем строку
-//    }
-//
-//    else if (incomingByte == ';')
-//    {                                           // если таки приняли ; - конец парсинга
-//      getStarted = false;                       // сброс
-//      recievedFlag = true;                      // флаг на принятие
-//    }
-//  }
-//}
-//// -------------------- //
-//
-//  void moveVehicle(int leftSpeed, int rightSpeed)
-//  {
-//    if (carPosition == "Forward")
-//    {
-//      motorL.setmotor(_CW, leftSpeed);
-//      motorR.setmotor(_CCW, rightSpeed);
-//    }
-//
-//    if (carPosition == "Backward")
-//    {
-//      motorL.setmotor(_CCW, leftSpeed);
-//      motorR.setmotor(_CW, rightSpeed);
-//    }
-//
-//    state = ST_MOVE;
-//  }
-//
-//int incoming;
-//
-//    parsing();
-//    
-//    if (recievedFlag)
-//    {
-//      recievedFlag = false;
-//      dataX = intData[0];
-//      dataY = intData[1];
-//    
-//      Serial.print(dataX);
-//      Serial.print(" ");
-//      Serial.println(dataY);
-//    }
-//    
-//    if (dataX == 0 && dataY == 0)
-//    {
-//      car.stopVehicle();                  // "Death zone" - no movement
-//    
-//      dutyR = dutyL = 0;
-//    } else {
-//      signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // Y-axis signal
-//      signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // Х-axis signal
-//    
-//      dutyR = signalY + signalX;
-//      dutyL = signalY - signalX;
-//    
-//      if (dutyL > 0) car.carPosition = "Forward";
-//      else car.carPosition = "Backward";
-//    
-//      if (dutyR > 0) car.carPosition = "Backward";
-//      else car.carPosition = "Forward";
-//    
-//      dutyR = constrain(abs(dutyR), 0, MOTOR_MAX);
-//      dutyL = constrain(abs(dutyL), 0, MOTOR_MAX);
-//      
-//      Serial.println("SPEED R SPEED L");
-//      Serial.print(dutyR);
-//      Serial.print(" ");
-//      Serial.println(dutyL);
-//    }
-//
-//    //  speed_left = input(dutyL);
-//    //  speed_right = input(dutyR);
-//    //  car.moveVehicle(speed_left, speed_right);
-//}
