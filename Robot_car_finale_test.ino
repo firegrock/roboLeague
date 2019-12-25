@@ -8,12 +8,16 @@
 
 // ---------- Declare all objects
 WiFiUDP Udp;                            // UDP conenction
-BluetoothSerial SerialBT;                 // Object for bluetooth
+BluetoothSerial SerialBT;               // Object for bluetooth
 
 Motor motorA(0x30, _MOTOR_A, 1000);     // Motors left and right side
 Motor motorB(0x30, _MOTOR_B, 1000);
+uint8_t forwardL = _CW;
+uint8_t backwardL = _CCW;
+uint8_t forwardR = _CCW;
+uint8_t backwardR = _CW;
                                         // Joystick control
-#define MOTOR_MAX 100                   // Max PWM possible
+#define MOTOR_MAX 60                    // Max PWM possible
 #define JOY_MAX 40                      // Joystick max-amplitude
 
 const int statusLED = 13;
@@ -23,7 +27,7 @@ const int switchTilt = 17;
 
 // ---------- PID initialization
 double input, output, setpoint;
-double Kp=4, Ki=1, Kd=0.01;
+double Kp = 4, Ki = 1, Kd = 0.01;
 PID pidControl(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 // -------------------- //
 
@@ -56,17 +60,17 @@ void parsing()
       if (incomingByte != ' ' && incomingByte != ';')     // если это не пробел И не конец
         string_convert += incomingByte;                   // складываем в строку
       else
-      {                                               // если это пробел или ; конец пакета
-        intData[index_x] = string_convert.toInt();    // преобразуем строку в int и кладём в массив
-        string_convert = "";                          // очищаем строку
-        index_x++;                                    // переходим к парсингу следующего элемента массива
+      {                                                   // если это пробел или ; конец пакета
+        intData[index_x] = string_convert.toInt();        // преобразуем строку в int и кладём в массив
+        string_convert = "";                              // очищаем строку
+        index_x++;                                        // переходим к парсингу следующего элемента массива
       }
     }
 
     if (incomingByte == '$')
     {                                           // если это $
       getStarted = true;                        // поднимаем флаг, что можно парсить
-      index_x= 0;                               // сбрасываем индекс
+      index_x = 0;                               // сбрасываем индекс
       string_convert = "";                      // очищаем строку
     }
 
@@ -92,14 +96,26 @@ public:
   int val = 0;
   int speedL = 0;
   int speedR = 0;
+
+  int carInverse = 0;
+  
 public:
-  void initialize()
-  {
-    state = ST_INIT;
+  void initialize() 
+  { 
+    state = ST_INIT; 
+    
+    pidControl.SetMode(AUTOMATIC);
+    pidControl.SetTunings(Kp, Ki, Kd);
+    Serial.println("PID tuned up");
+    
+    pinMode (statusLED, OUTPUT);
+    pinMode (switchTilt, INPUT);
   }
 
-  void waitConnection(bool UDPenable = 1, bool BTenable = 0)
+  void waitConnection(bool UDPenable = 0, bool BTenable = 1)
   {
+    state = ST_CONNECT;
+    
     if (UDPenable == 1)
     {
       Serial.println(WiFi.softAP(m_ssid, m_password) ? "AP connected" : "Failed to connect!");
@@ -107,40 +123,57 @@ public:
     }
 
     if (BTenable == 1)
-    {     
-      if(!SerialBT.begin("Robot controller 2"))
-        Serial.println("An error occurred initializing Bluetooth");
-      else
-        Serial.println("Bluetooth initialized");
-    }
+    {
+      SerialBT.begin("ROBOLEAGUE");
+      Serial.println("Bluetooth module enabled");
+      Serial.println("Bluetooth module is Ready to Pair");
 
-    state = ST_CONNECT;
+      while (SerialBT.hasClient() == 0) { Serial.println("No client available"); delay(1000); }
+
+      state = ST_IDLE;
+    }
   }
 
   void idleVehicle()
   {
+    state = ST_IDLE;
+
+    if (SerialBT.hasClient() == 0) { Serial.println("No client available"); delay(1000); }
+    
     motorA.setmotor(_STANDBY);
     motorB.setmotor(_STANDBY);
-    
-    state = ST_IDLE;
+
+    parsing();
+
+    if (recievedFlag)
+    {
+      state = ST_MOVE;
+    }
   }
 
   void leftSide(int speedLeft, int inverse = 0)
-  {
-    speedL = constrain(abd(speedLeft), 0, 100);
-    if (speedL > 0)
-      motorA.setmotor(_CW, speedL)
-    else 
-      motorA.setmotor(_CCW, speedL)
+  {  
+    if (speedL > 0) {
+      speedL = constrain(abs(speedLeft), 0, MOTOR_MAX);
+      motorA.setmotor(forwardL, speedL);
+    }
+    else {
+      speedL = constrain(abs(speedLeft), 0, MOTOR_MAX);
+      motorA.setmotor(backwardL, speedL);
+    }
   }
 
-  void rightSide(int speedLeft, int inverse = 0)
+  void rightSide(int speedRight, int inverse = 0)
   {
-    speedR = constrain(abd(speedRight), 0, 100);
-    if (speedR > 0)
-      motorA.setmotor(_CCW, speedR)
-    else 
-      motorA.setmotor(_CW, speedR)
+    
+    if (speedR > 0) {
+      speedR = constrain(abs(speedRight), 0, MOTOR_MAX);
+      motorA.setmotor(forwardR, speedR);
+    }
+    else {
+      speedR = constrain(abs(speedRight), 0, MOTOR_MAX);
+      motorA.setmotor(backwardR, speedR); 
+    }
   }
 
   void stopVehicle()
@@ -148,7 +181,7 @@ public:
     motorA.setmotor(_STOP);
     motorB.setmotor(_STOP);
 
-    state = ST_STOP;
+    state = ST_IDLE;
   }
 
   bool inversed()
@@ -157,35 +190,32 @@ public:
 
     if (val == HIGH)
       return 1;
-    else
+    else {
+      forwardL  = _CCW;
+      backwardL = _CW;
+      forwardR  = _CW;
+      backwardR = _CCW;
       return 0;
+    }
   }
-};
-
-Robot car;
+} car;
 // -------------------- //
 
-int inverse = 0, speedRight = 0, speedLeft = 0;
+
 void setup()
 {
   Serial.begin(115200);
   Serial.println("Begin initialization ...");
 
+  car.initialize();
   delay(5);
+  Serial.println("Initialization completed"); // выводим сообщение об удачной инициализации
+
   car.waitConnection(0, 1);
   delay(5);
-  pidControl.SetMode(AUTOMATIC);
-  pidControl.SetTunings(Kp, Ki, Kd);
-  Serial.println("PID enable");
-  delay(5);
-  pinMode (statusLED, OUTPUT);
-  pinMode (switchTilt, INPUT);
-  delay(5);
-  state = ST_MOVE;
-
-  Serial.println("Initialization completed"); // выводим сообщение об удачной инициализации
 }
 
+int inverse = 0, speedRight = 0, speedLeft = 0;
 int incoming;
 void loop()
 {
@@ -194,45 +224,56 @@ void loop()
     case ST_INIT:
       Serial.println("State = initalization");
       car.initialize();
+
       break;
+      
     case ST_CONNECT:
       Serial.println("State = connection");
       car.waitConnection();
+
       break;
+      
     case ST_IDLE:
-      Serial.println("State = idle");
+      Serial.println("State = idle - Robot stopped");
       car.idleVehicle();
+
       break;
+      
     case ST_MOVE:
-      state = ST_MOVE;
+      if (SerialBT.hasClient() == 0) { state = ST_IDLE; break; }
+      
       inverse = car.inversed();
       parsing();
 
       if (recievedFlag)
       {
+        state = ST_MOVE;
         recievedFlag = false;
         dataX = intData[0];
         dataY = intData[1];
         SerialBT.flush();
-        
+    
         signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // Y-axis signal
         signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // Х-axis signal
-        
+    
         dutyR = signalY + signalX;
         dutyL = signalY - signalX;
-      
-        Serial.println("SPEED R SPEED L");
+        
+        Serial.println("SPEED: ");
         Serial.print(dutyR);
         Serial.print(" ");
         Serial.println(dutyL);
+    
+        motorA.setmotor(_CW, dutyL);
+        motorB.setmotor(_CCW, dutyR);
+      } 
 
-        car.leftSide(dutyL, inverse);
-        car.rightSide(dutyR, inverse);
-      }
       break;
+      
     case ST_STOP:
       Serial.println("State = stop");
       car.stopVehicle();
+
       break;
     default: break;
   }
