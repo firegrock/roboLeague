@@ -12,10 +12,7 @@ BluetoothSerial SerialBT;               // Object for bluetooth
 
 Motor motorA(0x30, _MOTOR_A, 1000);     // Motors left and right side
 Motor motorB(0x30, _MOTOR_B, 1000);
-uint8_t forwardL = _CW;
-uint8_t backwardL = _CCW;
-uint8_t forwardR = _CCW;
-uint8_t backwardR = _CW;
+
                                         // Joystick control
 #define MOTOR_MAX 60                    // Max PWM possible
 #define JOY_MAX 40                      // Joystick max-amplitude
@@ -97,17 +94,18 @@ public:
   int speedL = 0;
   int speedR = 0;
 
-  int carInverse = 0;
-  
+  int rotateLeft = 1;
+  int rotateRight = 2;
+
 public:
-  void initialize() 
-  { 
-    state = ST_INIT; 
-    
+  void initialize()
+  {
+    state = ST_INIT;
+
     pidControl.SetMode(AUTOMATIC);
     pidControl.SetTunings(Kp, Ki, Kd);
     Serial.println("PID tuned up");
-    
+
     pinMode (statusLED, OUTPUT);
     pinMode (switchTilt, INPUT);
   }
@@ -115,7 +113,7 @@ public:
   void waitConnection(bool UDPenable = 0, bool BTenable = 1)
   {
     state = ST_CONNECT;
-    
+
     if (UDPenable == 1)
     {
       Serial.println(WiFi.softAP(m_ssid, m_password) ? "AP connected" : "Failed to connect!");
@@ -139,7 +137,7 @@ public:
     state = ST_IDLE;
 
     if (SerialBT.hasClient() == 0) { Serial.println("No client available"); delay(1000); }
-    
+
     motorA.setmotor(_STANDBY);
     motorB.setmotor(_STANDBY);
 
@@ -151,28 +149,28 @@ public:
     }
   }
 
-  void leftSide(int speedLeft, int inverse = 0)
-  {  
+  void leftSide(int speedLeft)
+  {
     if (speedL > 0) {
       speedL = constrain(abs(speedLeft), 0, MOTOR_MAX);
-      motorA.setmotor(forwardL, speedL);
+      motorA.setmotor(rotateLeft, speedL);
     }
     else {
       speedL = constrain(abs(speedLeft), 0, MOTOR_MAX);
-      motorA.setmotor(backwardL, speedL);
+      motorA.setmotor(rotateLeft + 1, speedL);
     }
   }
 
-  void rightSide(int speedRight, int inverse = 0)
+  void rightSide(int speedRight)
   {
-    
+
     if (speedR > 0) {
       speedR = constrain(abs(speedRight), 0, MOTOR_MAX);
-      motorA.setmotor(forwardR, speedR);
+      motorA.setmotor(rotateRight, speedR);
     }
     else {
       speedR = constrain(abs(speedRight), 0, MOTOR_MAX);
-      motorA.setmotor(backwardR, speedR); 
+      motorA.setmotor(rotateRight + 1, speedR);
     }
   }
 
@@ -184,18 +182,19 @@ public:
     state = ST_IDLE;
   }
 
-  bool inversed()
+  void inversed()
   {
     val = digitalRead(switchTilt);
 
     if (val == HIGH)
-      return 1;
-    else {
-      forwardL  = _CCW;
-      backwardL = _CW;
-      forwardR  = _CW;
-      backwardR = _CCW;
-      return 0;
+    {
+      rotateLeft = 1;
+      rotateRight = 2;
+    }
+    else
+    {
+      rotateLeft = 2;
+      rotateRight = 1;
     }
   }
 } car;
@@ -226,50 +225,52 @@ void loop()
       car.initialize();
 
       break;
-      
+
     case ST_CONNECT:
       Serial.println("State = connection");
       car.waitConnection();
 
       break;
-      
+
     case ST_IDLE:
-      Serial.println("State = idle - Robot stopped");
+      Serial.println("State = idle");
       car.idleVehicle();
 
       break;
-      
+
     case ST_MOVE:
       if (SerialBT.hasClient() == 0) { state = ST_IDLE; break; }
-      
-      inverse = car.inversed();
+      else { state = ST_MOVE; }
+
+      car.inversed();
       parsing();
 
       if (recievedFlag)
       {
-        state = ST_MOVE;
         recievedFlag = false;
         dataX = intData[0];
         dataY = intData[1];
         SerialBT.flush();
-    
+
         signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // Y-axis signal
         signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // Х-axis signal
-    
+
         dutyR = signalY + signalX;
         dutyL = signalY - signalX;
-        
+
         Serial.println("SPEED: ");
         Serial.print(dutyR);
         Serial.print(" ");
-        Serial.println(dutyL);
-    
-        motorA.setmotor(_CW, dutyL);
-        motorB.setmotor(_CCW, dutyR);
-      } 
+        Serial.print(dutyL);
+        Serial.print(" ");
+        Serial.println(inverse);
+
+        car.leftSide(dutyL);
+        car.rightSide(dutyR);
+      }
 
       break;
-      
+
     case ST_STOP:
       Serial.println("State = stop");
       car.stopVehicle();
