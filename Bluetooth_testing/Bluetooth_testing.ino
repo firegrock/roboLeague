@@ -77,15 +77,34 @@ void loop()
     dataX = intData[0];
     dataY = intData[1];
 
-    signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // Y-axis signal
-    signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // Х-axis signal
+    Serial.println("Input data: ");
+    Serial.print(dataX);
+    Serial.print(" ");
+    Serial.println(dataY);
+  }
+
+  if (dataX == 0 && dataY == 0)
+  {
+    dutyR = 0;
+    dutyL = dutyR;
+
+    Serial.println("Speed is zero");
+  }
+
+  else
+  {
+    signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // сигнал по У
+    signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // сигнал по Х
 
     dutyR = signalY + signalX;
     dutyL = signalY - signalX;
 
-    Serial.println("SPEED: ");
-    Serial.print(dutyR);
-    Serial.print(" ");
-    Serial.println(dutyL);
+    dutyR = constrain(abs(dutyR), 0, MOTOR_MAX);
+    dutyL = constrain(abs(dutyL), 0, MOTOR_MAX);
   }
+
+  Serial.println("Speed: ");
+  Serial.print(dutyR);
+  Serial.print(" ");
+  Serial.println(dutyL);
 }
