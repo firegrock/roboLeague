@@ -5,6 +5,8 @@
 #include "BluetoothSerial.h"
 #include <MotorControl.h>
 
+// зел кор жел оранж
+
 // TX2 = 17 - Tilt D0
 // D27 - IN1
 // D14 - IN2
@@ -32,10 +34,10 @@ bool inversed()
 MotorControl motorL(IN1, IN2);
 MotorControl motorR(IN4, IN3);
 
-BluetoothSerial SerialBT;                // Object for bluetooth
+BluetoothSerial SerialBT;                 // Object for bluetooth
 
-#define MOTOR_MAX 200                    // Max PWM possible
-#define JOY_MAX 40                       // Joystick max-amplitude
+#define MOTOR_MAX 200                     // Max PWM possible
+#define JOY_MAX 40                        // Joystick max-amplitude
 
 // Parsing string
 int intData[2];                           // array of received data

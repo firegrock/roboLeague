@@ -28,7 +28,7 @@
 
 // ---------- Declare objects
 MotorControl motorL(IN1, IN2);
-MotorControl motorR(IN4, IN3);
+MotorControl motorR(IN3, IN4);
 
 WiFiUDP Udp;                             // UDP conenction
 BluetoothSerial SerialBT;                // Object for bluetooth
@@ -53,9 +53,10 @@ class RobotCar
     char m_packetBuffer[255];                           // buffer to hold incoming packet
 
 
+    bool initialized = 0;
     bool UDP_connected = 0;
     bool BT_connected = 0;
-    
+
 
     int intData[2];                                     // array of received data
     boolean recievedFlag;
@@ -68,17 +69,22 @@ class RobotCar
     String string_convert = "";
 
     int tiltVal = 0;
+    float k_l = 1;
+    float k_r = 1;
 
   public:
     void initialize()
     {
+      state = ST_INIT;
       pinMode (switchTilt, INPUT);
 
       Serial.println("Initialization completed");
+      initialized = 1;
     }
 
     void waitConnection(bool UDPenable = 0, bool BTenable = 1)
     {
+      state = ST_CONNECT;
       if (UDPenable == 1)
       {
         Serial.println(WiFi.softAP(m_ssid, m_password) ? "AP connected" : "Failed to connect!");
@@ -90,43 +96,39 @@ class RobotCar
       if (BTenable == 1)
       {
         SerialBT.begin("ROBOLEAGUE");
-        Serial.println("Bluetooth module enabled and Ready to Pair");
 
         while (SerialBT.hasClient() == 0) {
           Serial.println("No client available");
           delay(1000);
         }
 
+        Serial.println("BT connected");
+        
         BT_connected = 1;
       }
     }
 
     void idleVehicle()
     {
-      if (SerialBT.hasClient() == 0) {
-        stopVehicle();
-
-        state = ST_CONNECT;
-      }
-      else
-        state = ST_IDLE;
-
-      tiltVal = inversed();
+      if (SerialBT.hasClient() == 0) state = ST_CONNECT;
+      else state = ST_IDLE;
+      
       parsing();
-
-      if (recievedFlag) speedCalc();
+      if (recievedFlag) state = ST_MOVE;
     }
 
     void moveVehicle()
     {
-      motorL.setSpeed(dutyR);
-      motorR.setSpeed(dutyL);
+      motorL.setSpeed(dutyL * k_l);
+      motorR.setSpeed(dutyR * k_r);
     }
 
     void stopVehicle()
     {
       motorL.setMode(STOP);
       motorR.setMode(STOP);
+
+      state = ST_IDLE;
     }
 
     void speedCalc()
@@ -134,31 +136,35 @@ class RobotCar
       recievedFlag = false;
       dataX = intData[0];
       dataY = intData[1];
-      
+  
       if (dataX == 0 && dataY == 0)
       {
-        dutyR = dutyL = 0;
-        stopVehicle();
+        dutyR = 0;
+        dutyL = 0;
+        
+        state = ST_STOP;
       }
-
-      else 
+  
+      else
       {
-        signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         // сигнал по У
-        signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); // сигнал по Х
+        tiltVal = getTilt_pos();
+        
+        signalY = map((dataY), -JOY_MAX, JOY_MAX, -MOTOR_MAX, MOTOR_MAX);         
+        signalX = map((dataX), -JOY_MAX, JOY_MAX, -MOTOR_MAX / 2, MOTOR_MAX / 2); 
   
         dutyR = signalY + signalX;
         dutyL = signalY - signalX;
   
-        if (dutyR > 0) motorL.setMode(FORWARD);
-        else motorL.setMode(BACKWARD);
+        if (dutyR > 0) { motorL.setMode(FORWARD); k_l = 1.23; }
+        else { motorL.setMode(BACKWARD); k_l = 1.74; }
   
-        if (dutyL > 0) motorR.setMode(FORWARD);
-        else motorR.setMode(BACKWARD);
+        if (dutyL > 0) { motorR.setMode(FORWARD); k_r = 1; }
+        else { motorR.setMode(BACKWARD); k_r = 0.823; }
   
         dutyR = constrain(abs(dutyR), 0, MOTOR_MAX);
         dutyL = constrain(abs(dutyL), 0, MOTOR_MAX);
 
-        moveVehicle();
+        state = ST_MOVE;
       }
     }
 
@@ -166,36 +172,36 @@ class RobotCar
     {
       if (SerialBT.available())
       {
-        char incomingByte = SerialBT.read();                  // обязательно ЧИТАЕМ входящий символ
+        char incomingByte = SerialBT.read();                  
 
         if (getStarted)
-        { // если приняли начальный символ (парсинг разрешён)
-          if (incomingByte != ' ' && incomingByte != ';')     // если это не пробел И не конец
-            string_convert += incomingByte;                   // складываем в строку
+        {
+          if (incomingByte != ' ' && incomingByte != ';')     
+            string_convert += incomingByte;                   
           else
-          { // если это пробел или ; конец пакета
-            intData[index_x] = string_convert.toInt();        // преобразуем строку в int и кладём в массив
-            string_convert = "";                              // очищаем строку
-            index_x++;                                        // переходим к парсингу следующего элемента массива
+          {
+            intData[index_x] = string_convert.toInt();        
+            string_convert = "";                              
+            index_x++;                                        
           }
         }
 
         if (incomingByte == '$')
-        { // если это $
-          getStarted = true;                        // поднимаем флаг, что можно парсить
-          index_x = 0;                               // сбрасываем индекс
-          string_convert = "";                      // очищаем строку
+        { 
+          getStarted = true;                       
+          index_x = 0;                             
+          string_convert = "";                     
         }
 
         else if (incomingByte == ';')
-        { // если таки приняли ; - конец парсинга
-          getStarted = false;                       // сброс
-          recievedFlag = true;                      // флаг на принятие
+        { 
+          getStarted = false;                       
+          recievedFlag = true;                      
         }
       }
     }
 
-    bool inversed()
+    bool getTilt_pos()
     {
       tiltVal = digitalRead(switchTilt);
 
@@ -213,12 +219,12 @@ void setup()
   Serial.begin(115200);
 
   car.initialize();
-  state = ST_INIT;
+  if (car.initialized) state = ST_INIT;
   delay(10);
 
   Serial.println("Waiting for connection ...");
-  car.waitConnection(0, 1);
-  state = ST_CONNECT;
+  car.waitConnection();
+  if (car.BT_connected || car.UDP_connected) state = ST_IDLE;
   delay(10);
 }
 
@@ -226,29 +232,27 @@ void loop()
 {
   switch (state)
   {
-    case ST_INIT:
-      Serial.println("State = initalization");
-      state = ST_INIT;
-      car.initialize();
-
-      break;
     case ST_CONNECT:
-      Serial.println("State = connection");
-      state = ST_CONNECT;
-      car.waitConnection();
+      while (!car.BT_connected || !car.UDP_connected) 
+      { 
+        Serial.println("No client available"); 
+        delay(1000);
+        
+        if (car.BT_connected || car.UDP_connected) state = ST_IDLE;
+      }
 
-      if (car.BT_connected == 1 || car.UDP_connected == 1) state = ST_IDLE;
-      
       break;
+    
     case ST_IDLE:
       Serial.println("State = idle");
-      state = ST_IDLE;
       car.idleVehicle();
 
       break;
+      
     case ST_MOVE:
-      Serial.println("State = move");
-      state = ST_MOVE;
+      car.parsing();
+      if (car.recievedFlag) car.speedCalc();
+      
       car.moveVehicle();
 
       Serial.print(car.tiltVal);
@@ -258,9 +262,9 @@ void loop()
       Serial.println(car.dutyR);
 
       break;
+      
     case ST_STOP:
       Serial.println("State = stop");
-      state = ST_STOP;
       car.stopVehicle();
 
       break;
